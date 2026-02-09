@@ -568,6 +568,24 @@ body {
     padding: 3px;
 }
 
+/* === Board doubles (vertical on board) === */
+#board .domino-tile.board-double.vertical {
+    --tile-size: 34px;
+    --pip-size: 4px;
+    align-self: center;
+}
+
+#board .domino-tile.board-double .tile-half {
+    padding: 3px;
+}
+
+@media (max-height: 600px) {
+    #board .domino-tile.board-double.vertical {
+        --tile-size: 28px;
+        --pip-size: 3px;
+    }
+}
+
 /* === Board end markers === */
 .board-end-marker {
     width: 40px;

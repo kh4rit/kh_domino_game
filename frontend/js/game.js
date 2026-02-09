@@ -95,13 +95,16 @@ const Game = {
 
         boardEl.classList.remove('empty');
 
-        // Render each tile on the board horizontally
+        // Render each tile on the board (doubles vertically, others horizontally)
         for (const bt of state.board) {
-            const tileEl = this.createTileElement(bt.tile, 'horizontal', {
+            const isDouble = bt.tile.left === bt.tile.right;
+            const orientation = isDouble ? 'vertical' : 'horizontal';
+            const tileEl = this.createTileElement(bt.tile, orientation, {
                 boardTile: true,
                 exposedLeft: bt.exposed_left,
                 exposedRight: bt.exposed_right,
             });
+            if (isDouble) tileEl.classList.add('board-double');
             boardEl.appendChild(tileEl);
         }
 
@@ -448,10 +451,10 @@ const Game = {
 
         if (data.next_game) {
             nextDiv.classList.remove('hidden');
-            // Auto-hide after state update
+            // Auto-hide after 5 seconds
             setTimeout(() => {
                 overlay.classList.add('hidden');
-            }, 3000);
+            }, 5000);
         }
     },
 

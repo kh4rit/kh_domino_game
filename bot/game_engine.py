@@ -279,10 +279,9 @@ class DominoEngine:
                     "boneyard_count": 0}
 
         # Player must have no valid moves to draw
-        if self.state.board:
-            if player.has_playable_tile(self.state.left_end, self.state.right_end):
-                return {"success": False, "error": "You have playable tiles, cannot draw",
-                        "tile": None, "boneyard_count": len(self.state.boneyard)}
+        if self.get_valid_moves(player_telegram_id):
+            return {"success": False, "error": "You have playable tiles, cannot draw",
+                    "tile": None, "boneyard_count": len(self.state.boneyard)}
 
         drawn = self.state.boneyard.pop()
         player.hand.append(drawn)

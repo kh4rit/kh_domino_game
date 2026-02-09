@@ -187,8 +187,8 @@ async def _handle_game_over(game_id: str):
             "game_number": result["game_number"],
         })
 
-        # Brief pause then send new game state
-        await asyncio.sleep(1)
+        # Wait for the game-over overlay to show (5 seconds) before sending new state
+        await asyncio.sleep(5)
 
         await _broadcast_state(game_id)
 
