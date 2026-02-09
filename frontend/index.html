@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>Domino</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="screen-loading" class="screen active">
+        <div class="loading-spinner"></div>
+        <p>Loading game...</p>
+    </div>
+
+    <!-- Game Screen -->
+    <div id="screen-game" class="screen">
+        <!-- Top Bar: Session info + opponent info -->
+        <div id="top-bar">
+            <div id="session-info">Game <span id="game-number">1</span> of <span id="total-games">2</span></div>
+            <div id="opponents-bar"></div>
+        </div>
+
+        <!-- Board Area -->
+        <div id="board-container">
+            <div id="board-scroll">
+                <div id="board"></div>
+            </div>
+        </div>
+
+        <!-- Turn Indicator -->
+        <div id="turn-indicator">
+            <span id="turn-text"></span>
+        </div>
+
+        <!-- Player's Hand -->
+        <div id="hand-container">
+            <div id="hand"></div>
+        </div>
+
+        <!-- Side Selector (appears when tile can go on either side) -->
+        <div id="side-selector" class="hidden">
+            <div class="side-selector-content">
+                <p>Which side?</p>
+                <button id="btn-left" class="side-btn">Left</button>
+                <button id="btn-right" class="side-btn">Right</button>
+                <button id="btn-cancel-side" class="side-btn cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Over Overlay -->
+    <div id="overlay-gameover" class="overlay hidden">
+        <div class="overlay-content">
+            <h2 id="gameover-title"></h2>
+            <p id="gameover-message"></p>
+            <div id="gameover-next" class="hidden">
+                <p>Next game starting...</p>
+                <div class="loading-spinner small"></div>
+            </div>
+            <div id="gameover-session-end" class="hidden">
+                <h3>Session Results</h3>
+                <div id="session-results"></div>
+                <button id="btn-close" class="action-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/telegram.js"></script>
+    <script src="/js/websocket.js"></script>
+    <script src="/js/game.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+[Unit]
+Description=Domino Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vk
+WorkingDirectory=/home/vk/kh_domino_bot
+ExecStart=/home/vk/kh_domino_bot/start.sh
+Restart=on-failure
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=domino-bot
+
+[Install]
+WantedBy=multi-user.target

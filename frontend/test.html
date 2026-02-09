@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>Domino - Test Mode</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --card: #16213e;
+            --text: #e0e0e0;
+            --hint: #999;
+            --btn: #3a86ff;
+            --btn-text: #fff;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: var(--card);
+            border-radius: 20px;
+            padding: 32px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 { font-size: 24px; margin-bottom: 8px; }
+        .subtitle { color: var(--hint); font-size: 14px; margin-bottom: 24px; }
+        .field { margin-bottom: 16px; text-align: left; }
+        .field label {
+            display: block;
+            font-size: 13px;
+            color: var(--hint);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .field input, .field select {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 16px;
+            outline: none;
+        }
+        .field input:focus, .field select:focus {
+            border-color: var(--btn);
+        }
+        .field select option { background: var(--card); }
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 14px;
+            background: var(--btn);
+            color: var(--btn-text);
+            border: none;
+            border-radius: 12px;
+            font-size: 17px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 24px;
+            transition: opacity 0.15s;
+        }
+        .btn:active { opacity: 0.8; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .status {
+            margin-top: 16px;
+            font-size: 14px;
+            color: var(--hint);
+            min-height: 20px;
+        }
+        .status.error { color: #ef4444; }
+        .spinner {
+            display: inline-block;
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,0.2);
+            border-top-color: var(--btn);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Domino Test Mode</h1>
+        <p class="subtitle">Play against bots — no Telegram group needed</p>
+
+        <div class="field">
+            <label>Your Name</label>
+            <input type="text" id="player-name" value="Test Player" placeholder="Enter your name">
+        </div>
+
+        <div class="field">
+            <label>Number of Bot Opponents</label>
+            <select id="num-bots">
+                <option value="2" selected>2 bots (3 players total)</option>
+                <option value="3">3 bots (4 players total)</option>
+                <option value="4">4 bots (5 players total)</option>
+            </select>
+        </div>
+
+        <button class="btn" id="btn-start" onclick="startTestGame()">Start Test Game</button>
+        <div class="status" id="status"></div>
+    </div>
+
+    <script>
+        async function startTestGame() {
+            const btn = document.getElementById('btn-start');
+            const status = document.getElementById('status');
+            const name = document.getElementById('player-name').value.trim() || 'Test Player';
+            const numBots = parseInt(document.getElementById('num-bots').value);
+
+            btn.disabled = true;
+            status.className = 'status';
+            status.innerHTML = '<span class="spinner"></span> Creating game...';
+
+            try {
+                // Use a fixed test player ID
+                const playerId = 999999;
+
+                const resp = await fetch('/api/test/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        player_id: playerId,
+                        player_name: name,
+                        num_bots: numBots,
+                    }),
+                });
+
+                if (!resp.ok) {
+                    throw new Error(`Server error: ${resp.status}`);
+                }
+
+                const data = await resp.json();
+                status.innerHTML = '<span class="spinner"></span> Starting game...';
+
+                // Redirect to the game page with test params
+                const url = `/?game_id=${data.game_id}&test=1&player_id=${data.player_id}`;
+                window.location.href = url;
+
+            } catch (e) {
+                status.className = 'status error';
+                status.textContent = `Error: ${e.message}`;
+                btn.disabled = false;
+            }
+        }
+
+        // Start on Enter key
+        document.getElementById('player-name').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') startTestGame();
+        });
+    </script>
+</body>
+</html>
