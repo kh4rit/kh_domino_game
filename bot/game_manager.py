@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Callable, Awaitable
 
 from bot.game_engine import DominoEngine, Tile
-from bot.config import MIN_PLAYERS, MAX_PLAYERS, LOBBY_TIMEOUT, GAMES_PER_SESSION
+from bot.config import MIN_PLAYERS, MAX_PLAYERS, LOBBY_TIMEOUT, GAMES_PER_SESSION, TURN_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,8 @@ class ActiveSession:
     player_infos: list[dict]  # Original player infos for restarting
     engine: Optional[DominoEngine] = None
     results: list[dict] = field(default_factory=list)  # Results of each game
+    turn_timer_task: Optional[asyncio.Task] = None
+    turn_deadline: Optional[float] = None  # Unix timestamp when turn expires
 
 
 class GameManager:
@@ -223,6 +225,65 @@ class GameManager:
         result = session.engine.pass_turn(player_telegram_id)
         return result
 
+    def draw_tile(self, game_id: str, player_telegram_id: int) -> dict:
+        """Draw a tile from the boneyard."""
+        session = self.sessions.get(game_id)
+        if not session or not session.engine:
+            return {"success": False, "error": "Game not found", "tile": None, "boneyard_count": 0}
+
+        result = session.engine.draw_tile(player_telegram_id)
+        return result
+
+    def start_turn_timer(self, game_id: str):
+        """Start (or restart) the turn timer for the current player. Skips bot players."""
+        session = self.sessions.get(game_id)
+        if not session or not session.engine:
+            return
+        if session.engine.state.status != "active":
+            return
+
+        # Cancel existing timer
+        self.cancel_turn_timer(game_id)
+
+        # Don't set timers for bot players — they're handled by bot_ai
+        from bot.bot_ai import is_bot_player
+        current = session.engine.state.current_player
+        if is_bot_player(current.telegram_id):
+            return
+
+        session.turn_deadline = time.time() + TURN_TIMEOUT
+        session.turn_timer_task = asyncio.create_task(self._turn_timeout(game_id))
+
+    def cancel_turn_timer(self, game_id: str):
+        """Cancel the turn timer for a game."""
+        session = self.sessions.get(game_id)
+        if not session:
+            return
+        if session.turn_timer_task and not session.turn_timer_task.done():
+            session.turn_timer_task.cancel()
+        session.turn_timer_task = None
+        session.turn_deadline = None
+
+    async def _turn_timeout(self, game_id: str):
+        """Wait for turn timeout, then trigger AI takeover."""
+        try:
+            await asyncio.sleep(TURN_TIMEOUT)
+        except asyncio.CancelledError:
+            return
+
+        session = self.sessions.get(game_id)
+        if not session or not session.engine:
+            return
+        if session.engine.state.status != "active":
+            return
+
+        # AI takeover — import here to avoid circular dependency
+        from bot.bot_ai import ai_play_for_player
+        current = session.engine.state.current_player
+        logger.info(f"Turn timeout for {current.display_name} in {game_id} — AI taking over")
+
+        await ai_play_for_player(game_id, current.telegram_id)
+
     def get_game_state(self, game_id: str, for_player_id: Optional[int] = None) -> Optional[dict]:
         """Get the current game state."""
         session = self.sessions.get(game_id)
@@ -234,6 +295,7 @@ class GameManager:
         state["session_id"] = session.session_id
         state["game_number"] = session.game_number
         state["total_games"] = GAMES_PER_SESSION
+        state["turn_deadline"] = session.turn_deadline
         return state
 
     def get_valid_moves(self, game_id: str, player_telegram_id: int) -> list[dict]:

@@ -222,6 +222,9 @@ async def _start_game_from_lobby(game_id: str, chat_id: int, context: ContextTyp
             await target.send_message(chat_id, message)
         return
 
+    # Start the turn timer for the first player
+    game_manager.start_turn_timer(game_id)
+
     base_url = get_base_url()
     webapp_url = f"{base_url}/?game_id={game_id}"
 

@@ -96,6 +96,7 @@ class BoardTile:
 class GameState:
     players: list[PlayerState]
     board: list[BoardTile] = field(default_factory=list)
+    boneyard: list[Tile] = field(default_factory=list)
     current_player_index: int = 0
     status: str = "waiting"  # waiting, active, finished
     winner_telegram_id: Optional[int] = None
@@ -146,6 +147,7 @@ class GameState:
             "status": self.status,
             "winner_telegram_id": self.winner_telegram_id,
             "is_fish": self.is_fish,
+            "boneyard_count": len(self.boneyard),
         }
 
 
@@ -177,26 +179,35 @@ class DominoEngine:
                 hand=hand,
             ))
 
-        self.state = GameState(players=players)
+        # Leftover tiles go to the boneyard (shop)
+        dealt_count = num_players * tiles_per_player
+        boneyard = all_tiles[dealt_count:]
+
+        self.state = GameState(players=players, boneyard=boneyard)
         self._determine_first_player()
         self.state.status = "active"
 
     def _determine_first_player(self):
         """
-        The player with the highest double goes first.
+        The player with the lowest double goes first: [0|0], then [1|1], etc.
         If no one has a double, the player with the highest-pip tile goes first.
+        The qualifying double is stored so get_valid_moves can enforce it as the only first move.
         """
         best_player_index = 0
-        best_double = -1
+        best_double = 7  # Sentinel above max (6)
 
         for i, player in enumerate(self.state.players):
             for tile in player.hand:
-                if tile.is_double() and tile.left > best_double:
+                if tile.is_double() and tile.left < best_double:
                     best_double = tile.left
                     best_player_index = i
 
-        if best_double == -1:
+        if best_double < 7:
+            # Store the required first tile
+            self._forced_first_tile = Tile(left=best_double, right=best_double)
+        else:
             # No doubles — find highest pip total
+            self._forced_first_tile = None
             best_total = -1
             for i, player in enumerate(self.state.players):
                 for tile in player.hand:
@@ -220,9 +231,13 @@ class DominoEngine:
         moves = []
 
         if not self.state.board:
-            # First move — any tile can be played
-            for tile in player.hand:
-                moves.append({"tile": tile, "side": "left"})
+            # First move — must play the qualifying double if one exists
+            if self._forced_first_tile and self._forced_first_tile in player.hand:
+                moves.append({"tile": self._forced_first_tile, "side": "left"})
+            else:
+                # No forced tile (no doubles existed) — any tile can be played
+                for tile in player.hand:
+                    moves.append({"tile": tile, "side": "left"})
             return moves
 
         left_end = self.state.left_end
@@ -240,6 +255,40 @@ class DominoEngine:
                     moves.append({"tile": tile, "side": "right"})
 
         return moves
+
+    def draw_tile(self, player_telegram_id: int) -> dict:
+        """
+        Draw one tile from the boneyard into the player's hand.
+        Returns {"success": bool, "error": str|None, "tile": dict|None, "boneyard_count": int}
+        """
+        if self.state.status != "active":
+            return {"success": False, "error": "Game is not active", "tile": None,
+                    "boneyard_count": len(self.state.boneyard)}
+
+        player = self._get_player(player_telegram_id)
+        if not player:
+            return {"success": False, "error": "Player not in game", "tile": None,
+                    "boneyard_count": len(self.state.boneyard)}
+
+        if player.telegram_id != self.state.current_player.telegram_id:
+            return {"success": False, "error": "Not your turn", "tile": None,
+                    "boneyard_count": len(self.state.boneyard)}
+
+        if not self.state.boneyard:
+            return {"success": False, "error": "Boneyard is empty", "tile": None,
+                    "boneyard_count": 0}
+
+        # Player must have no valid moves to draw
+        if self.state.board:
+            if player.has_playable_tile(self.state.left_end, self.state.right_end):
+                return {"success": False, "error": "You have playable tiles, cannot draw",
+                        "tile": None, "boneyard_count": len(self.state.boneyard)}
+
+        drawn = self.state.boneyard.pop()
+        player.hand.append(drawn)
+
+        return {"success": True, "error": None, "tile": drawn.to_dict(),
+                "boneyard_count": len(self.state.boneyard)}
 
     def play_tile(self, player_telegram_id: int, tile: Tile, side: str) -> dict:
         """
@@ -324,6 +373,10 @@ class DominoEngine:
             if player.has_playable_tile(self.state.left_end, self.state.right_end):
                 return {"success": False, "error": "You have playable tiles, cannot pass", "game_over": False, "is_fish": False}
 
+        # Cannot pass if boneyard still has tiles — must draw instead
+        if self.state.boneyard:
+            return {"success": False, "error": "Boneyard is not empty, draw a tile first", "game_over": False, "is_fish": False}
+
         player.passed_last_turn = True
         self.state.consecutive_passes += 1
 
@@ -357,8 +410,9 @@ class DominoEngine:
 
     def _auto_skip_blocked_players(self):
         """
-        Auto-pass players who have no valid moves, counting consecutive passes.
-        If all players are blocked, it's a fish.
+        Auto-pass players who have no valid moves AND cannot draw from the boneyard.
+        If all players are blocked (and boneyard is empty), it's a fish.
+        When boneyard has tiles, stop at the first blocked player so they can draw.
         """
         if self.state.status != "active":
             return
@@ -368,6 +422,10 @@ class DominoEngine:
             current = self.state.current_player
             if current.has_playable_tile(self.state.left_end, self.state.right_end):
                 return  # This player can play
+
+            # If boneyard has tiles, stop here — player must draw manually (or bot AI draws)
+            if self.state.boneyard:
+                return
 
             current.passed_last_turn = True
             self.state.consecutive_passes += 1

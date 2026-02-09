@@ -14,8 +14,9 @@ const App = {
         const isTestMode = params.get('test') === '1';
         const testPlayerId = params.get('player_id');
 
-        // Initialize Telegram SDK
+        // Initialize Telegram SDK and sound
         TG.init();
+        SFX.init();
 
         // In test mode, override player ID from URL
         if (isTestMode && testPlayerId) {
@@ -125,16 +126,47 @@ const App = {
             if (!result.success) {
                 console.error('Move failed:', result.error);
                 TG.hapticFeedback('error');
+                SFX.error();
                 // Re-render to reset UI
                 if (Game.state) {
                     await this.fetchValidMoves();
                     Game.render(Game.state);
                 }
+            } else {
+                SFX.tilePlaced();
             }
             // If success, the WebSocket will send us the updated state
 
         } catch (e) {
             console.error('Play move error:', e);
+            TG.hapticFeedback('error');
+        }
+    },
+
+    /**
+     * Draw a tile from the boneyard (shop).
+     */
+    async drawTile() {
+        try {
+            const resp = await fetch(`/api/game/${this.gameId}/draw`, {
+                method: 'POST',
+                headers: this.apiHeaders,
+            });
+
+            const result = await resp.json();
+
+            if (result.success) {
+                TG.hapticFeedback('light');
+                SFX.draw();
+                // WebSocket will send us updated state; also re-fetch moves
+                // since the drawn tile might be playable
+            } else {
+                console.error('Draw failed:', result.error);
+                TG.hapticFeedback('error');
+                SFX.error();
+            }
+        } catch (e) {
+            console.error('Draw tile error:', e);
             TG.hapticFeedback('error');
         }
     },
@@ -155,6 +187,8 @@ const App = {
             const result = await resp.json();
             if (!result.success) {
                 console.error('Pass failed:', result.error);
+            } else {
+                SFX.pass();
             }
         } catch (e) {
             console.error('Auto-pass error:', e);
@@ -191,10 +225,18 @@ const App = {
      * Handle game state update from WebSocket.
      */
     async onGameStateUpdate(state) {
+        const wasMyTurn = Game.state && Game.state.current_player_id === this.playerId;
+        const isMyTurn = state.current_player_id === this.playerId && state.status === 'active';
+
         // Fetch valid moves for the new state
         Game.validMoves = [];
-        if (state.current_player_id === this.playerId && state.status === 'active') {
+        if (isMyTurn) {
             await this.fetchValidMoves();
+        }
+
+        // Play "your turn" sound when turn switches to us
+        if (isMyTurn && !wasMyTurn) {
+            SFX.yourTurn();
         }
 
         // Hide game over overlay if a new game started

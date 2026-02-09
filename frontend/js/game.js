@@ -6,6 +6,9 @@ const Game = {
     selectedTile: null,
     validMoves: [],
     playerId: 0,
+    _timerInterval: null,
+    _dragState: null,  // {tile, startX, startY, isDragging, ghost, sides}
+    DRAG_THRESHOLD: 10,
 
     /** Pip layout positions for values 0-6 in a 3x3 grid */
     PIP_LAYOUTS: {
@@ -147,11 +150,15 @@ const Game = {
                  (this.selectedTile.left === tile.right && this.selectedTile.right === tile.left));
 
             const tileEl = this.createTileElement(tile, 'vertical', {
-                clickable: isMyTurn && isPlayable,
+                clickable: false,  // We handle click via drag threshold
                 playable: isMyTurn ? isPlayable : undefined,
                 selected: isSelected,
-                onClick: (t) => this.onTileClick(t),
             });
+
+            // Attach unified pointer handlers for drag + click
+            if (isMyTurn && isPlayable) {
+                this._attachDragHandlers(tileEl, tile);
+            }
 
             handEl.appendChild(tileEl);
         }
@@ -187,14 +194,33 @@ const Game = {
     },
 
     /**
-     * Render the turn indicator.
+     * Render the turn indicator, Draw button, boneyard count, and turn timer.
      */
     renderTurnIndicator(state) {
         const indicator = document.getElementById('turn-indicator');
         const text = document.getElementById('turn-text');
+        const drawBtn = document.getElementById('btn-draw');
+        const boneyardEl = document.getElementById('boneyard-count');
+        const timerEl = document.getElementById('turn-timer');
+
+        // Reset draw button
+        drawBtn.classList.add('hidden');
+        drawBtn.onclick = null;
+
+        // Stop existing timer interval
+        this._stopTimerInterval();
+
+        // Show boneyard count when > 0
+        if (state.boneyard_count > 0) {
+            boneyardEl.textContent = `Shop: ${state.boneyard_count}`;
+            boneyardEl.classList.remove('hidden');
+        } else {
+            boneyardEl.classList.add('hidden');
+        }
 
         if (state.status !== 'active') {
             text.textContent = '';
+            timerEl.classList.add('hidden');
             indicator.classList.remove('my-turn');
             return;
         }
@@ -205,6 +231,13 @@ const Game = {
             const hasPlayableTiles = this.validMoves.length > 0;
             if (hasPlayableTiles) {
                 text.textContent = 'Your turn — tap a tile to play';
+            } else if (state.boneyard_count > 0) {
+                text.textContent = 'No playable tiles — draw from the shop!';
+                drawBtn.classList.remove('hidden');
+                drawBtn.onclick = () => {
+                    TG.hapticFeedback('light');
+                    App.drawTile();
+                };
             } else {
                 text.textContent = 'No playable tiles — passing...';
             }
@@ -214,6 +247,46 @@ const Game = {
             const name = currentPlayer ? currentPlayer.display_name : 'Opponent';
             text.textContent = `${name}'s turn...`;
             indicator.classList.remove('my-turn');
+        }
+
+        // Start countdown timer if turn_deadline is set
+        if (state.turn_deadline) {
+            timerEl.classList.remove('hidden');
+            this._startTimerInterval(state.turn_deadline, timerEl);
+        } else {
+            timerEl.classList.add('hidden');
+        }
+    },
+
+    /** Start the turn countdown interval. */
+    _startTimerInterval(deadline, timerEl) {
+        let lastRemaining = -1;
+        const isMyTurn = this.state && this.state.current_player_id === this.playerId;
+
+        const update = () => {
+            const remaining = Math.max(0, Math.ceil(deadline - Date.now() / 1000));
+            timerEl.textContent = `${remaining}s`;
+            timerEl.classList.toggle('timer-warning', remaining <= 5);
+
+            // Play warning tick each second in the danger zone (only for the active player)
+            if (isMyTurn && remaining <= 5 && remaining > 0 && remaining !== lastRemaining) {
+                SFX.timerWarning();
+            }
+            lastRemaining = remaining;
+
+            if (remaining <= 0) {
+                this._stopTimerInterval();
+            }
+        };
+        update();
+        this._timerInterval = setInterval(update, 500);
+    },
+
+    /** Stop the turn countdown interval. */
+    _stopTimerInterval() {
+        if (this._timerInterval) {
+            clearInterval(this._timerInterval);
+            this._timerInterval = null;
         }
     },
 
@@ -236,11 +309,12 @@ const Game = {
         this.renderTurnIndicator(state);
         this.renderSessionInfo(state);
 
-        // Auto-pass if it's our turn but no moves
+        // Auto-pass if it's our turn but no moves AND boneyard is empty
         if (state.status === 'active' &&
             state.current_player_id === this.playerId &&
             this.validMoves.length === 0 &&
-            state.board && state.board.length > 0) {
+            state.board && state.board.length > 0 &&
+            (state.boneyard_count || 0) === 0) {
             setTimeout(() => App.autoPass(), 500);
         }
     },
@@ -355,11 +429,13 @@ const Game = {
             title.className = 'fish';
             message.textContent = 'Nobody could play — the fish wins this one!';
             TG.hapticFeedback('warning');
+            SFX.fish();
         } else if (result.winner_telegram_id === this.playerId) {
             title.textContent = 'You Win!';
             title.className = 'win';
             message.textContent = 'Congratulations!';
             TG.hapticFeedback('success');
+            SFX.gameWin();
         } else {
             const winner = this.state?.players?.find(p => p.telegram_id === result.winner_telegram_id);
             const name = winner ? winner.display_name : 'Someone';
@@ -367,6 +443,7 @@ const Game = {
             title.className = 'lose';
             message.textContent = 'Better luck next time!';
             TG.hapticFeedback('error');
+            SFX.gameLose();
         }
 
         if (data.next_game) {
@@ -429,6 +506,236 @@ const Game = {
                 TG.close();
             }
         };
+    },
+
+    // --- Drag and Drop ---
+
+    /** Get possible sides for a tile. */
+    _getPossibleSides(tile) {
+        const sides = [];
+        for (const move of this.validMoves) {
+            if ((move.tile.left === tile.left && move.tile.right === tile.right) ||
+                (move.tile.left === tile.right && move.tile.right === tile.left)) {
+                sides.push(move.side);
+            }
+        }
+        return sides;
+    },
+
+    /** Attach touch + mouse drag handlers to a tile element. */
+    _attachDragHandlers(el, tile) {
+        // Touch events
+        el.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            this._onDragStart(tile, touch.clientX, touch.clientY, el);
+        }, { passive: true });
+
+        el.addEventListener('touchmove', (e) => {
+            if (!this._dragState) return;
+            const touch = e.touches[0];
+            this._onDragMove(touch.clientX, touch.clientY);
+            if (this._dragState.isDragging) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        el.addEventListener('touchend', (e) => {
+            if (!this._dragState) return;
+            const touch = e.changedTouches[0];
+            this._onDragEnd(touch.clientX, touch.clientY);
+        });
+
+        // Mouse events
+        el.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            this._onDragStart(tile, e.clientX, e.clientY, el);
+
+            const onMouseMove = (ev) => {
+                if (!this._dragState) return;
+                this._onDragMove(ev.clientX, ev.clientY);
+            };
+            const onMouseUp = (ev) => {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+                if (!this._dragState) return;
+                this._onDragEnd(ev.clientX, ev.clientY);
+            };
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+    },
+
+    /** Begin a potential drag. */
+    _onDragStart(tile, x, y, el) {
+        const sides = this._getPossibleSides(tile);
+        this._dragState = {
+            tile,
+            startX: x,
+            startY: y,
+            isDragging: false,
+            ghost: null,
+            sides,
+            sourceEl: el,
+        };
+    },
+
+    /** Handle move — start actual drag if threshold exceeded. */
+    _onDragMove(x, y) {
+        const ds = this._dragState;
+        if (!ds) return;
+
+        const dx = x - ds.startX;
+        const dy = y - ds.startY;
+
+        if (!ds.isDragging) {
+            if (Math.abs(dx) > this.DRAG_THRESHOLD || Math.abs(dy) > this.DRAG_THRESHOLD) {
+                ds.isDragging = true;
+                ds.sourceEl.classList.add('dragging');
+                this._createGhost(ds.tile, x, y);
+                this._showDropMarkers(ds.tile, ds.sides);
+            }
+            return;
+        }
+
+        // Move ghost
+        if (ds.ghost) {
+            ds.ghost.style.left = `${x}px`;
+            ds.ghost.style.top = `${y}px`;
+        }
+
+        // Highlight nearest drop target
+        this._updateDropHighlight(x, y);
+    },
+
+    /** Handle end — either drop on a marker or treat as click. */
+    _onDragEnd(x, y) {
+        const ds = this._dragState;
+        if (!ds) return;
+
+        if (ds.isDragging) {
+            const side = this._getDropTarget(x, y);
+            this._cleanupDrag();
+
+            if (side) {
+                TG.hapticFeedback('medium');
+                App.playMove(ds.tile, side);
+            }
+        } else {
+            // Was a tap/click (below threshold)
+            this._cleanupDrag();
+            TG.hapticFeedback('light');
+            this.onTileClick(ds.tile);
+        }
+
+        this._dragState = null;
+    },
+
+    /** Create a floating ghost tile that follows the pointer. */
+    _createGhost(tile, x, y) {
+        const ghost = this.createTileElement(tile, 'vertical', { playable: true });
+        ghost.classList.add('drag-ghost');
+        ghost.style.left = `${x}px`;
+        ghost.style.top = `${y}px`;
+        document.body.appendChild(ghost);
+        this._dragState.ghost = ghost;
+    },
+
+    /** Show left/right drop markers on the board. */
+    _showDropMarkers(tile, sides) {
+        this._removeDropMarkers();
+
+        const boardEl = document.getElementById('board');
+        if (!this.state || !this.state.board || this.state.board.length === 0) {
+            // Empty board — single center marker
+            if (sides.includes('left')) {
+                const marker = this._createMarker('left', 'Play here');
+                boardEl.appendChild(marker);
+            }
+            return;
+        }
+
+        if (sides.includes('left')) {
+            const marker = this._createMarker('left', `\u25C0 ${this.state.left_end}`);
+            boardEl.insertBefore(marker, boardEl.firstChild);
+        }
+        if (sides.includes('right')) {
+            const marker = this._createMarker('right', `${this.state.right_end} \u25B6`);
+            boardEl.appendChild(marker);
+        }
+    },
+
+    /** Create a drop marker element. */
+    _createMarker(side, label) {
+        const marker = document.createElement('div');
+        marker.className = 'board-end-marker drop-target';
+        marker.dataset.side = side;
+        marker.textContent = label;
+        return marker;
+    },
+
+    /** Remove all drop markers. */
+    _removeDropMarkers() {
+        document.querySelectorAll('.drop-target').forEach(el => el.remove());
+    },
+
+    /** Highlight the nearest drop target based on pointer position. */
+    _updateDropHighlight(x, y) {
+        const markers = document.querySelectorAll('.drop-target');
+        let closest = null;
+        let closestDist = Infinity;
+
+        markers.forEach(marker => {
+            const rect = marker.getBoundingClientRect();
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            const dist = Math.hypot(x - cx, y - cy);
+            marker.classList.remove('highlight');
+            if (dist < closestDist) {
+                closestDist = dist;
+                closest = marker;
+            }
+        });
+
+        if (closest && closestDist < 150) {
+            closest.classList.add('highlight');
+        }
+    },
+
+    /** Get the side of the drop target under the pointer, or null. */
+    _getDropTarget(x, y) {
+        const markers = document.querySelectorAll('.drop-target');
+        for (const marker of markers) {
+            const rect = marker.getBoundingClientRect();
+            // Generous hit area (expanded by 30px)
+            if (x >= rect.left - 30 && x <= rect.right + 30 &&
+                y >= rect.top - 30 && y <= rect.bottom + 30) {
+                return marker.dataset.side;
+            }
+        }
+
+        // Fallback: if only one marker and ghost is in the board area, accept it
+        if (markers.length === 1) {
+            const boardContainer = document.getElementById('board-container');
+            const boardRect = boardContainer.getBoundingClientRect();
+            if (y >= boardRect.top && y <= boardRect.bottom) {
+                return markers[0].dataset.side;
+            }
+        }
+
+        return null;
+    },
+
+    /** Clean up drag state and DOM elements. */
+    _cleanupDrag() {
+        if (this._dragState) {
+            if (this._dragState.ghost) {
+                this._dragState.ghost.remove();
+            }
+            if (this._dragState.sourceEl) {
+                this._dragState.sourceEl.classList.remove('dragging');
+            }
+        }
+        this._removeDropMarkers();
     },
 
     escapeHtml(text) {

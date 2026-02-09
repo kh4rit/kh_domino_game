@@ -111,9 +111,11 @@ async def play_move(game_id: str, request: Request):
 
         # Check if game is over
         if result.get("game_over"):
+            game_manager.cancel_turn_timer(game_id)
             await _handle_game_over(game_id)
         else:
-            # Trigger bot turns if next player is a bot
+            # Restart turn timer for the next player and trigger bot turns
+            game_manager.start_turn_timer(game_id)
             await _trigger_bot_turns(game_id)
 
     return JSONResponse(result)
@@ -129,9 +131,26 @@ async def pass_turn(game_id: str, request: Request):
         await _broadcast_state(game_id)
 
         if result.get("game_over"):
+            game_manager.cancel_turn_timer(game_id)
             await _handle_game_over(game_id)
         else:
+            game_manager.start_turn_timer(game_id)
             await _trigger_bot_turns(game_id)
+
+    return JSONResponse(result)
+
+
+@app.post("/api/game/{game_id}/draw")
+async def draw_tile(game_id: str, request: Request):
+    """Draw a tile from the boneyard."""
+    player_id = extract_player_id(request)
+    result = game_manager.draw_tile(game_id, player_id)
+
+    if result.get("success"):
+        # Restart turn timer (player still has the turn, but gets more time after drawing)
+        game_manager.start_turn_timer(game_id)
+        # Broadcast updated state (other players see tile count change + boneyard count)
+        await _broadcast_state(game_id)
 
     return JSONResponse(result)
 
@@ -173,10 +192,14 @@ async def _handle_game_over(game_id: str):
 
         await _broadcast_state(game_id)
 
+        # Start turn timer for the first player of the new game
+        game_manager.start_turn_timer(game_id)
+
         # If bot goes first in the new game, trigger their turns
         await _trigger_bot_turns(game_id)
 
     elif result["action"] == "session_end":
+        game_manager.cancel_turn_timer(game_id)
         await ws_manager.broadcast_event(game_id, "session_end", {
             "results": result["results"],
         })
@@ -235,6 +258,9 @@ async def create_test_game(request: Request):
     num_bots = max(2, min(4, num_bots))  # 2-4 bots (3-5 total)
 
     game_id = game_manager.create_test_game(player_id, player_name, num_bots)
+
+    # Start turn timer for the first player
+    game_manager.start_turn_timer(game_id)
 
     # If a bot goes first, trigger their turns after a short delay
     session = game_manager.get_session(game_id)

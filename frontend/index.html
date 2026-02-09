@@ -18,7 +18,10 @@
     <div id="screen-game" class="screen">
         <!-- Top Bar: Session info + opponent info -->
         <div id="top-bar">
-            <div id="session-info">Game <span id="game-number">1</span> of <span id="total-games">2</span></div>
+            <div id="session-info">
+                Game <span id="game-number">1</span> of <span id="total-games">2</span>
+                <button id="btn-mute" class="mute-btn" onclick="SFX.toggleMute()"></button>
+            </div>
             <div id="opponents-bar"></div>
         </div>
 
@@ -32,6 +35,9 @@
         <!-- Turn Indicator -->
         <div id="turn-indicator">
             <span id="turn-text"></span>
+            <span id="turn-timer" class="turn-timer hidden"></span>
+            <button id="btn-draw" class="draw-btn hidden">Draw from shop</button>
+            <span id="boneyard-count" class="boneyard-count hidden"></span>
         </div>
 
         <!-- Player's Hand -->
@@ -69,6 +75,7 @@
 
     <script src="/js/telegram.js"></script>
     <script src="/js/websocket.js"></script>
+    <script src="/js/sound.js"></script>
     <script src="/js/game.js"></script>
     <script src="/js/app.js"></script>
 </body>

@@ -15,6 +15,7 @@ MIN_PLAYERS = 3
 MAX_PLAYERS = 5
 LOBBY_TIMEOUT = 60  # seconds
 GAMES_PER_SESSION = 2
+TURN_TIMEOUT = 30  # seconds per turn before AI takeover
 
 # Tiles per player by player count
 TILES_PER_PLAYER = {
