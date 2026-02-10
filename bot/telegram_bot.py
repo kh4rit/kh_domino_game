@@ -71,9 +71,6 @@ async def cmd_start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Store the message ID so we can update it
     lobby.message_id = sent.message_id
 
-    # Start the 60-second timer
-    game_manager.start_lobby_timer(game_id)
-
 
 async def cmd_scores(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /scores command — show leaderboard."""
@@ -108,12 +105,19 @@ async def cmd_scores(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def callback_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle 'Join Game' button press."""
     query = update.callback_query
-    await query.answer()
 
     if not query.data or not query.from_user:
+        await query.answer()
         return
 
     game_id = query.data.replace("join_", "")
+
+    # Check if lobby still exists
+    lobby = game_manager.get_lobby(game_id)
+    if not lobby:
+        await query.answer("This lobby has expired or the game already started.", show_alert=True)
+        return
+
     user = query.from_user
 
     display_name = user.first_name
@@ -128,8 +132,17 @@ async def callback_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     success, message = game_manager.join_lobby(game_id, player)
 
-    if success:
-        await ensure_player(user.id, update.effective_chat.id, display_name, user.username)
+    if not success:
+        await query.answer(message, show_alert=True)
+        return
+
+    await query.answer()
+    await ensure_player(user.id, update.effective_chat.id, display_name, user.username)
+
+    # Check if we have enough players to auto-start
+    if game_manager.can_start(game_id):
+        await _start_game_from_lobby(game_id, query.message.chat_id, context)
+        return
 
     # Update the lobby message
     lobby = game_manager.get_lobby(game_id)
@@ -142,9 +155,46 @@ async def callback_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception:
             pass
-    else:
-        # Lobby might have been started or cancelled
+
+
+async def callback_leave(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle 'Leave Game' button press."""
+    query = update.callback_query
+
+    if not query.data or not query.from_user:
+        await query.answer()
+        return
+
+    game_id = query.data.replace("leave_", "")
+    user = query.from_user
+
+    success, message = game_manager.leave_lobby(game_id, user.id)
+
+    if not success:
         await query.answer(message, show_alert=True)
+        return
+
+    await query.answer(message)
+
+    # Update the lobby message (or show cancelled)
+    lobby = game_manager.get_lobby(game_id)
+    if lobby:
+        text = _build_lobby_text(lobby)
+        keyboard = _build_lobby_keyboard(game_id)
+        try:
+            await query.edit_message_text(
+                text, reply_markup=keyboard, parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            pass
+    else:
+        # Creator left — lobby was cancelled
+        try:
+            await query.edit_message_text(
+                "<b>Lobby cancelled.</b>", parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            pass
 
 
 async def callback_start_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -173,6 +223,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data.startswith("join_"):
         await callback_join(update, context)
+    elif query.data.startswith("leave_"):
+        await callback_leave(update, context)
     elif query.data.startswith("start_"):
         await callback_start_now(update, context)
 
@@ -195,15 +247,19 @@ def _build_lobby_text(lobby) -> str:
     return (
         f"<b>Domino Game Lobby</b>\n\n"
         f"Players ({count}/{MAX_PLAYERS}):\n{player_list}\n"
-        f"{status}\n\n"
-        f"<i>Game auto-starts in 60 seconds or when someone clicks Start.</i>"
+        f"{status}"
     )
 
 
 def _build_lobby_keyboard(game_id: str) -> InlineKeyboardMarkup:
-    """Build lobby inline keyboard."""
+    """Build lobby inline keyboard with Join, Leave, and Start buttons."""
     lobby = game_manager.get_lobby(game_id)
-    buttons = [[InlineKeyboardButton("Join Game", callback_data=f"join_{game_id}")]]
+    buttons = [
+        [
+            InlineKeyboardButton("Join Game", callback_data=f"join_{game_id}"),
+            InlineKeyboardButton("Leave", callback_data=f"leave_{game_id}"),
+        ],
+    ]
 
     if lobby and len(lobby.players) >= MIN_PLAYERS:
         buttons.append(
@@ -321,7 +377,6 @@ def create_bot_app() -> Application:
 
     # Set up game manager callbacks
     game_manager.set_callbacks(
-        on_lobby_timeout=on_lobby_timeout,
         on_session_end=on_session_end,
     )
 

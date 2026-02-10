@@ -120,6 +120,35 @@ class GameManager:
         count = len(lobby.players)
         return True, f"{player.display_name} joined! ({count}/{MAX_PLAYERS} players)"
 
+    def leave_lobby(self, game_id: str, telegram_id: int) -> tuple[bool, str]:
+        """
+        Remove a player from a lobby.
+        Returns (success, message). Lobby is cancelled when the last player leaves.
+        """
+        lobby = self.lobbies.get(game_id)
+        if not lobby:
+            return False, "Lobby not found."
+
+        # Find the player
+        player = None
+        for p in lobby.players:
+            if p.telegram_id == telegram_id:
+                player = p
+                break
+
+        if not player:
+            return False, "You are not in this lobby."
+
+        lobby.players.remove(player)
+
+        # If lobby is now empty, cancel it
+        if not lobby.players:
+            self._cleanup_lobby(game_id)
+            return True, f"{player.display_name} left — lobby cancelled (no players)."
+
+        count = len(lobby.players)
+        return True, f"{player.display_name} left. ({count}/{MAX_PLAYERS} players)"
+
     def can_start(self, game_id: str) -> bool:
         """Check if a lobby has enough players to start."""
         lobby = self.lobbies.get(game_id)
