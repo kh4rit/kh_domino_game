@@ -141,7 +141,10 @@ async def callback_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if we have enough players to auto-start
     if game_manager.can_start(game_id):
-        await _start_game_from_lobby(game_id, query.message.chat_id, context)
+        try:
+            await _start_game_from_lobby(game_id, query.message.chat_id, context)
+        except Exception as e:
+            logger.error(f"Error auto-starting game {game_id}: {e}", exc_info=True)
         return
 
     # Update the lobby message
@@ -281,25 +284,23 @@ async def _start_game_from_lobby(game_id: str, chat_id: int, context: ContextTyp
     # Start the turn timer for the first player
     game_manager.start_turn_timer(game_id)
 
-    base_url = get_base_url()
-    webapp_url = f"{base_url}/?game_id={game_id}"
+    # Use t.me deep link to open as Mini App (works in group chats)
+    webapp_url = f"https://t.me/kh_domino_bot/kh_domino_game?startapp={game_id}"
+    logger.info(f"Starting game {game_id}, webapp_url={webapp_url}")
 
     target_bot = context.bot if context else bot
     if target_bot:
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                "Play Domino!",
-                web_app=WebAppInfo(url=webapp_url),
-            )]
-        ])
-
-        await target_bot.send_message(
-            chat_id,
+        text = (
             f"<b>Game Started!</b>\n\n{message}\n\n"
             f"Session: {GAMES_PER_SESSION} games\n"
-            f"Click below to play:",
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
+            f"Click below to play:"
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Play Domino!", url=webapp_url)]
+        ])
+        await target_bot.send_message(
+            chat_id, text, reply_markup=keyboard, parse_mode=ParseMode.HTML,
         )
 
 

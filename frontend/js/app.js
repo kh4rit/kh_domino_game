@@ -8,15 +8,20 @@ const App = {
     passPending: false,
 
     async init() {
-        // Get URL params first to check for test mode
+        // Initialize Telegram SDK and sound first (needed for start_param)
+        TG.init();
+        SFX.init();
+
+        // Get URL params to check for test mode
         const params = new URLSearchParams(window.location.search);
-        this.gameId = params.get('game_id');
         const isTestMode = params.get('test') === '1';
         const testPlayerId = params.get('player_id');
 
-        // Initialize Telegram SDK and sound
-        TG.init();
-        SFX.init();
+        // Get game_id from URL params, or from Telegram start_param (deep link)
+        this.gameId = params.get('game_id');
+        if (!this.gameId && TG.webapp) {
+            this.gameId = TG.webapp.initDataUnsafe?.start_param || null;
+        }
 
         // In test mode, override player ID from URL
         if (isTestMode && testPlayerId) {
