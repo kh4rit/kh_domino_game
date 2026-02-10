@@ -175,19 +175,14 @@ body {
     min-width: 100%;
     min-height: 100%;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: flex-start;
-    padding: 20px;
 }
 
 #board {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 2px;
-    margin: 0 auto;
-    max-width: 100%;
-    justify-content: center;
+    position: relative;
+    min-width: 100%;
+    min-height: 80px;
 }
 
 /* === Domino Tile (generic) === */
@@ -558,6 +553,20 @@ body {
     color: var(--win-color);
 }
 
+#session-leaderboard {
+    margin-top: 16px;
+}
+
+#session-leaderboard h3 {
+    font-size: 16px;
+    margin-bottom: 8px;
+    color: var(--text-color);
+}
+
+#session-leaderboard .result-label.winner {
+    color: var(--win-color);
+}
+
 /* === Board tile sizing (smaller for board view) === */
 #board .domino-tile {
     --tile-size: 34px;
@@ -568,11 +577,10 @@ body {
     padding: 3px;
 }
 
-/* === Board doubles (vertical on board) === */
-#board .domino-tile.board-double.vertical {
+/* === Board doubles (perpendicular to chain flow) === */
+#board .domino-tile.board-double {
     --tile-size: 34px;
     --pip-size: 4px;
-    align-self: center;
 }
 
 #board .domino-tile.board-double .tile-half {
@@ -580,7 +588,7 @@ body {
 }
 
 @media (max-height: 600px) {
-    #board .domino-tile.board-double.vertical {
+    #board .domino-tile.board-double {
         --tile-size: 28px;
         --pip-size: 3px;
     }
@@ -588,7 +596,7 @@ body {
 
 /* === Board end markers === */
 .board-end-marker {
-    width: 40px;
+    width: 50px;
     height: 40px;
     border: 2px dashed rgba(255,255,255,0.3);
     border-radius: 8px;
@@ -599,7 +607,7 @@ body {
     font-size: 20px;
     color: rgba(255,255,255,0.4);
     transition: all 0.2s;
-    flex-shrink: 0;
+    position: absolute;
 }
 
 .board-end-marker:hover {
@@ -621,14 +629,17 @@ body {
 }
 
 /* === Empty board placeholder === */
+#board.empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 120px;
+}
+
 #board.empty::after {
     content: 'Play a tile to start!';
     color: rgba(255,255,255,0.3);
     font-size: 16px;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
 }
 
 /* === Responsive adjustments === */

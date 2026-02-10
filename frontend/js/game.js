@@ -58,12 +58,17 @@ const Game = {
         if (options.playable) el.classList.add('playable');
         if (options.playable === false && !options.boardTile) el.classList.add('not-playable');
 
-        const firstValue = orientation === 'horizontal'
-            ? (options.exposedLeft !== undefined ? options.exposedLeft : tile.left)
-            : tile.left;
-        const secondValue = orientation === 'horizontal'
-            ? (options.exposedRight !== undefined ? options.exposedRight : tile.right)
-            : tile.right;
+        // For horizontal: first half = left, second half = right.
+        // For vertical: first half = top, second half = bottom.
+        // Board tiles use exposedLeft/exposedRight (horizontal) or exposedTop/exposedBottom (vertical).
+        let firstValue, secondValue;
+        if (orientation === 'horizontal') {
+            firstValue = options.exposedLeft !== undefined ? options.exposedLeft : tile.left;
+            secondValue = options.exposedRight !== undefined ? options.exposedRight : tile.right;
+        } else {
+            firstValue = options.exposedTop !== undefined ? options.exposedTop : tile.left;
+            secondValue = options.exposedBottom !== undefined ? options.exposedBottom : tile.right;
+        }
 
         el.appendChild(this.createHalfElement(firstValue));
         el.appendChild(this.createHalfElement(secondValue));
@@ -81,38 +86,371 @@ const Game = {
         return el;
     },
 
+    /** Stored snake layout positions for drop marker placement. */
+    _snakeLayout: null,
+
     /**
-     * Render the game board.
+     * Compute tile dimensions from CSS.
+     */
+    _getTileDims() {
+        const boardEl = document.getElementById('board');
+        const tempTile = document.createElement('div');
+        tempTile.className = 'domino-tile horizontal';
+        tempTile.style.visibility = 'hidden';
+        tempTile.style.position = 'absolute';
+        boardEl.appendChild(tempTile);
+        const tileSize = parseInt(getComputedStyle(tempTile).getPropertyValue('--tile-size')) || 34;
+        tempTile.remove();
+
+        const half = tileSize + 4;  // one half width including border
+        return {
+            half,
+            tileW: half * 2,        // horizontal non-double width
+            tileH: half,            // horizontal non-double height
+            doubleW: half,          // double rendered vertical: width
+            doubleH: half * 2,      // double rendered vertical: height
+            gap: 0,                 // tiles touch — no gap
+            turnLen: 1,             // single tile in a vertical turn segment
+        };
+    },
+
+    /**
+     * Get the dimensions and orientation for a tile given the current flow direction.
+     * Horizontal flow: non-doubles horizontal, doubles vertical (perpendicular).
+     * Vertical flow (up/down): non-doubles vertical (rotated), doubles horizontal (perpendicular).
+     */
+    _tileLayout(bt, flowDir, dims) {
+        const isDouble = bt.tile.left === bt.tile.right;
+        if (flowDir === 'right' || flowDir === 'left') {
+            return isDouble
+                ? { w: dims.doubleW, h: dims.doubleH, orientation: 'vertical', isDouble }
+                : { w: dims.tileW, h: dims.tileH, orientation: 'horizontal', isDouble };
+        } else {
+            // Vertical flow (up or down)
+            return isDouble
+                ? { w: dims.tileW, h: dims.tileH, orientation: 'horizontal', isDouble }
+                : { w: dims.doubleW, h: dims.doubleH, orientation: 'vertical', isDouble };
+        }
+    },
+
+    /** Row height for horizontal flow — tallest possible tile (a double). */
+    _rowHeight(dims) { return dims.doubleH; },
+
+    /** Column width for vertical flow — widest possible tile (a double horizontal). */
+    _colWidth(dims) { return dims.tileW; },
+
+    /**
+     * Lay out a chain of tiles going outward from the center tile.
+     *
+     * direction: 'right' or 'left' (initial horizontal direction).
+     * vDir: 1 (down) or -1 (up) — which vertical direction turns go.
+     *   Right chain turns DOWN (vDir=1), left chain turns UP (vDir=-1).
+     *
+     * Doubles never trigger a turn — they always stay in horizontal flow,
+     * even if they extend past the container edge. Only non-doubles turn.
+     * Each turn uses exactly 1 vertical tile.
+     *
+     * First row: tiles centered in rowH. Subsequent rows: tiles top-aligned
+     * (vDir=1) or bottom-aligned (vDir=-1) at the turn tile's outward edge.
+     * Turn tiles connect tile-to-tile to the last horizontal tile.
+     *
+     * Returns array of {x, y, w, h, orientation, isDouble, bt, flowDir}.
+     */
+    _layoutChain(tiles, startX, startY, direction, vDir, dims, containerWidth) {
+        const padding = 12;
+        const positions = [];
+        let x = startX;
+        let hDir = direction === 'right' ? 1 : -1;
+        let flowDir = direction;
+        const rowH = this._rowHeight(dims);
+        const vFlow = vDir === 1 ? 'down' : 'up';
+
+        // Track the last placed tile for precise corner alignment
+        let lastPos = null;
+
+        // rowEdgeY: the Y coordinate of the current row's connecting edge.
+        // First row: centering box top (tiles centered within rowH).
+        // Subsequent rows: the edge where tiles touch the turn tile.
+        //   vDir=1: top edge (tiles extend downward).
+        //   vDir=-1: bottom edge (tiles extend upward).
+        let rowEdgeY = startY;
+        let isFirstRow = true;
+
+        for (let i = 0; i < tiles.length; i++) {
+            const bt = tiles[i];
+            const layout = this._tileLayout(bt, flowDir, dims);
+            const { w, h, orientation, isDouble } = layout;
+
+            // --- Overflow check (doubles exempt — they never trigger turns) ---
+            const overflowR = hDir === 1 && (x + w > containerWidth - padding);
+            const overflowL = hDir === -1 && (x - w < padding);
+
+            if ((overflowR || overflowL) && !isDouble && i > 0 && lastPos) {
+                // === PLACE SINGLE VERTICAL TURN TILE ===
+                const vLayout = this._tileLayout(bt, vFlow, dims);
+                const vw = vLayout.w;
+                const vh = vLayout.h;
+
+                // Align to the outward edge of the last horizontal tile.
+                let tileX;
+                if (hDir === 1) {
+                    tileX = lastPos.x + lastPos.w - vw;
+                } else {
+                    tileX = lastPos.x;
+                }
+                const turnColX = tileX;
+                const turnColW = vw;
+
+                // Vertically: connect tile-to-tile with the last horizontal tile.
+                // vDir=1 (down): turn tile starts at last tile's bottom edge.
+                // vDir=-1 (up): turn tile ends at last tile's top edge.
+                const tileY = vDir === 1
+                    ? lastPos.y + lastPos.h
+                    : lastPos.y - vh;
+
+                positions.push({
+                    x: tileX, y: tileY, w: vw, h: vh,
+                    orientation: vLayout.orientation, isDouble: vLayout.isDouble,
+                    bt, flowDir: vFlow,
+                });
+                lastPos = positions[positions.length - 1];
+
+                // === TRANSITION TO NEW HORIZONTAL ROW ===
+                hDir = -hDir;
+                flowDir = hDir === 1 ? 'right' : 'left';
+
+                // X cursor: start from the turn tile's outer edge.
+                if (hDir === -1) {
+                    x = turnColX + turnColW;
+                } else {
+                    x = turnColX;
+                }
+
+                // New rowEdgeY: the turn tile's outward edge becomes the
+                // connecting edge for the next horizontal row.
+                rowEdgeY = vDir === 1
+                    ? tileY + vh
+                    : tileY;
+                isFirstRow = false;
+
+                continue;
+            }
+
+            // --- Place tile in current horizontal row ---
+            const tileX = hDir === 1 ? x : x - w;
+            let tileY;
+            if (isFirstRow) {
+                // First row: center vertically within rowH.
+                tileY = rowEdgeY + (rowH - h) / 2;
+            } else {
+                // Subsequent rows: align at the connecting edge (flush with turn tile).
+                // vDir=1 (down): tile top = rowEdgeY. Doubles extend further down.
+                // vDir=-1 (up): tile bottom = rowEdgeY. Doubles extend further up.
+                tileY = vDir === 1 ? rowEdgeY : rowEdgeY - h;
+            }
+
+            positions.push({
+                x: tileX, y: tileY, w, h,
+                orientation, isDouble, bt, flowDir,
+            });
+            lastPos = positions[positions.length - 1];
+
+            x = hDir === 1 ? tileX + w : tileX;
+        }
+
+        return positions;
+    },
+
+    /**
+     * Map backend exposed_left / exposed_right to visual half positions.
+     *
+     * Backend: exposed_left = closer to board[0], exposed_right = closer to board[-1].
+     * Right chain: exposed_left faces center (inward), exposed_right faces away (outward).
+     * Left chain: exposed_right faces center (inward), exposed_left faces away (outward).
+     */
+    _getTileExposedValues(bt, orientation, flowDir, chainSide) {
+        let inward, outward;
+        if (chainSide === 'right') {
+            inward = bt.exposed_left;
+            outward = bt.exposed_right;
+        } else {
+            inward = bt.exposed_right;
+            outward = bt.exposed_left;
+        }
+
+        if (orientation === 'horizontal') {
+            if (flowDir === 'right') {
+                return { exposedLeft: inward, exposedRight: outward };
+            } else if (flowDir === 'left') {
+                return { exposedLeft: outward, exposedRight: inward };
+            } else {
+                // Double perpendicular to vertical flow
+                return { exposedLeft: bt.exposed_left, exposedRight: bt.exposed_right };
+            }
+        } else {
+            // Vertical orientation
+            if (flowDir === 'down') {
+                // Down: top = inward (toward center/previous), bottom = outward
+                return { exposedTop: inward, exposedBottom: outward };
+            } else if (flowDir === 'up') {
+                // Up: bottom = inward (toward center/previous), top = outward
+                return { exposedTop: outward, exposedBottom: inward };
+            } else {
+                // Double perpendicular to horizontal flow
+                return { exposedTop: bt.exposed_left, exposedBottom: bt.exposed_right };
+            }
+        }
+    },
+
+    /**
+     * Render the game board as a snake/S-shape layout.
+     * Center tile at the exact center. Right chain goes right then turns DOWN.
+     * Left chain goes left then turns UP. They grow apart vertically.
+     * All positions are deterministic from the board array + first_tile_index.
      */
     renderBoard(state) {
         const boardEl = document.getElementById('board');
         boardEl.innerHTML = '';
+        this._snakeLayout = null;
 
         if (!state.board || state.board.length === 0) {
             boardEl.classList.add('empty');
+            boardEl.style.height = '';
+            boardEl.style.width = '';
             return;
         }
 
         boardEl.classList.remove('empty');
 
-        // Render each tile on the board (doubles vertically, others horizontally)
-        for (const bt of state.board) {
-            const isDouble = bt.tile.left === bt.tile.right;
-            const orientation = isDouble ? 'vertical' : 'horizontal';
-            const tileEl = this.createTileElement(bt.tile, orientation, {
+        const container = document.getElementById('board-container');
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        const dims = this._getTileDims();
+        const padding = 12;
+        const rowH = this._rowHeight(dims);
+
+        // Center tile index from server (deterministic)
+        const centerIdx = state.first_tile_index !== undefined ? state.first_tile_index : 0;
+        const centerTile = state.board[centerIdx];
+        const leftTiles = state.board.slice(0, centerIdx).reverse();
+        const rightTiles = state.board.slice(centerIdx + 1);
+
+        // Center tile layout
+        const isCenterDouble = centerTile.tile.left === centerTile.tile.right;
+        const centerLayout = this._tileLayout(centerTile, 'right', dims);
+        const centerW = centerLayout.w;
+        const centerH = centerLayout.h;
+        const centerX = Math.floor((containerWidth - centerW) / 2);
+
+        // Use firstRowY = 0 as reference; offset vertically later.
+        const firstRowY = 0;
+        const centerY = firstRowY + (rowH - centerH) / 2;
+
+        const centerPos = {
+            x: centerX, y: centerY, w: centerW, h: centerH,
+            isDouble: isCenterDouble, bt: centerTile,
+            orientation: centerLayout.orientation,
+            flowDir: 'right',
+        };
+
+        // Right chain: goes right, turns DOWN (vDir=1)
+        const rightStartX = centerX + centerW + dims.gap;
+        const rightPositions = this._layoutChain(
+            rightTiles, rightStartX, firstRowY, 'right', 1, dims, containerWidth
+        );
+
+        // Left chain: goes left, turns UP (vDir=-1)
+        const leftStartX = centerX - dims.gap;
+        const leftPositions = this._layoutChain(
+            leftTiles, leftStartX, firstRowY, 'left', -1, dims, containerWidth
+        );
+
+        // Combine (left reversed back to board order)
+        const leftReversed = [...leftPositions].reverse();
+        const allPositions = [
+            ...leftReversed,
+            centerPos,
+            ...rightPositions,
+        ];
+        const centerPosIdx = leftReversed.length;
+
+        // Compute bounding box
+        let minY = Infinity, maxY = -Infinity;
+        for (const pos of allPositions) {
+            if (pos.y < minY) minY = pos.y;
+            if (pos.y + pos.h > maxY) maxY = pos.y + pos.h;
+        }
+        const contentH = maxY - minY;
+
+        // Board height: at least the container, or taller if needed
+        const boardHeight = Math.max(containerHeight, contentH + padding * 2);
+
+        // Offset Y so center tile is vertically centered in the board
+        const centerTileDesiredY = Math.floor(boardHeight / 2 - centerH / 2);
+        const offsetY = centerTileDesiredY - centerY;
+        for (const pos of allPositions) {
+            pos.y += offsetY;
+        }
+
+        // Ensure nothing goes above y=padding; shift down if needed
+        let topOverflow = 0;
+        for (const pos of allPositions) {
+            if (pos.y < padding) {
+                topOverflow = Math.max(topOverflow, padding - pos.y);
+            }
+        }
+        if (topOverflow > 0) {
+            for (const pos of allPositions) {
+                pos.y += topOverflow;
+            }
+        }
+
+        // Recompute final board height
+        let finalMaxY = 0;
+        for (const pos of allPositions) {
+            const bottom = pos.y + pos.h;
+            if (bottom > finalMaxY) finalMaxY = bottom;
+        }
+        const finalBoardHeight = Math.max(containerHeight, finalMaxY + padding);
+
+        boardEl.style.width = `${containerWidth}px`;
+        boardEl.style.height = `${finalBoardHeight}px`;
+
+        // Store layout for drop markers
+        const leftEnd = leftPositions.length > 0 ? leftPositions[leftPositions.length - 1] : centerPos;
+        const rightEnd = rightPositions.length > 0 ? rightPositions[rightPositions.length - 1] : centerPos;
+        this._snakeLayout = {
+            allPositions, leftEnd, rightEnd, containerWidth, padding, dims,
+        };
+
+        // Render tiles
+        for (let i = 0; i < allPositions.length; i++) {
+            const pos = allPositions[i];
+            const chainSide = i < centerPosIdx ? 'left' : 'right';
+            const exposed = this._getTileExposedValues(
+                pos.bt, pos.orientation, pos.flowDir, chainSide
+            );
+            const tileEl = this.createTileElement(pos.bt.tile, pos.orientation, {
                 boardTile: true,
-                exposedLeft: bt.exposed_left,
-                exposedRight: bt.exposed_right,
+                ...exposed,
             });
-            if (isDouble) tileEl.classList.add('board-double');
+            if (pos.isDouble) tileEl.classList.add('board-double');
+            tileEl.style.position = 'absolute';
+            tileEl.style.left = `${pos.x}px`;
+            tileEl.style.top = `${pos.y}px`;
             boardEl.appendChild(tileEl);
         }
 
-        // Auto-scroll to center
-        const container = document.getElementById('board-container');
+        // Scroll: center on the center tile initially, then follow growth
         requestAnimationFrame(() => {
-            const scrollLeft = (boardEl.scrollWidth - container.clientWidth) / 2;
-            container.scrollLeft = Math.max(0, scrollLeft);
+            const centerTileFinalY = allPositions[centerPosIdx].y;
+            if (state.board.length <= 1) {
+                container.scrollTop = Math.max(0, centerTileFinalY - containerHeight / 2 + centerH / 2);
+            } else if (finalBoardHeight > containerHeight) {
+                // Scroll to keep center tile visible
+                const idealScroll = centerTileFinalY - containerHeight / 2 + centerH / 2;
+                container.scrollTop = Math.max(0, idealScroll);
+            }
         });
     },
 
@@ -501,6 +839,25 @@ const Game = {
             resultsDiv.appendChild(row);
         }
 
+        // Render leaderboard if provided
+        const leaderboardDiv = document.getElementById('session-leaderboard');
+        leaderboardDiv.innerHTML = '';
+        if (data.leaderboard && data.leaderboard.length > 0) {
+            leaderboardDiv.innerHTML = '<h3>Leaderboard</h3>';
+            for (let i = 0; i < data.leaderboard.length; i++) {
+                const entry = data.leaderboard[i];
+                const row = document.createElement('div');
+                row.className = 'result-row';
+                const isMe = entry.telegram_id === this.playerId;
+                const nameClass = isMe ? 'winner' : (entry.is_fish ? 'fish' : '');
+                row.innerHTML = `
+                    <span class="result-label">${i + 1}. ${this.escapeHtml(entry.display_name)}</span>
+                    <span class="result-value ${nameClass}">${entry.wins} win${entry.wins !== 1 ? 's' : ''}</span>
+                `;
+                leaderboardDiv.appendChild(row);
+            }
+        }
+
         document.getElementById('btn-close').onclick = () => {
             const params = new URLSearchParams(window.location.search);
             if (params.get('test') === '1') {
@@ -649,21 +1006,60 @@ const Game = {
 
         const boardEl = document.getElementById('board');
         if (!this.state || !this.state.board || this.state.board.length === 0) {
-            // Empty board — single center marker
+            // Empty board — single center marker in the middle
             if (sides.includes('left')) {
                 const marker = this._createMarker('left', 'Play here');
+                const container = document.getElementById('board-container');
+                marker.style.left = `${(container.clientWidth - 50) / 2}px`;
+                marker.style.top = `${(container.clientHeight - 40) / 2}px`;
                 boardEl.appendChild(marker);
             }
             return;
         }
 
+        const layout = this._snakeLayout;
+        if (!layout) return;
+
+        // Left marker: positioned based on the flow direction at the left end
         if (sides.includes('left')) {
+            const pos = layout.leftEnd;
             const marker = this._createMarker('left', `\u25C0 ${this.state.left_end}`);
-            boardEl.insertBefore(marker, boardEl.firstChild);
-        }
-        if (sides.includes('right')) {
-            const marker = this._createMarker('right', `${this.state.right_end} \u25B6`);
+            this._positionMarkerAtEnd(marker, pos, 'left');
             boardEl.appendChild(marker);
+        }
+
+        // Right marker: positioned based on the flow direction at the right end
+        if (sides.includes('right')) {
+            const pos = layout.rightEnd;
+            const marker = this._createMarker('right', `${this.state.right_end} \u25B6`);
+            this._positionMarkerAtEnd(marker, pos, 'right');
+            boardEl.appendChild(marker);
+        }
+    },
+
+    /**
+     * Position a drop marker adjacent to the chain end, respecting the flow direction.
+     * chainSide: 'left' or 'right' — which logical end of the chain.
+     */
+    _positionMarkerAtEnd(marker, pos, chainSide) {
+        const flowDir = pos.flowDir || 'right';
+        const markerW = 54;
+        const markerH = 44;
+        const gap = 4;
+
+        if (flowDir === 'down') {
+            marker.style.left = `${pos.x + (pos.w - markerW) / 2}px`;
+            marker.style.top = `${pos.y + pos.h + gap}px`;
+        } else if (flowDir === 'up') {
+            marker.style.left = `${pos.x + (pos.w - markerW) / 2}px`;
+            marker.style.top = `${pos.y - markerH - gap}px`;
+        } else if (flowDir === 'right') {
+            marker.style.left = `${pos.x + pos.w + gap}px`;
+            marker.style.top = `${pos.y + (pos.h - markerH) / 2}px`;
+        } else {
+            // left
+            marker.style.left = `${pos.x - markerW - gap}px`;
+            marker.style.top = `${pos.y + (pos.h - markerH) / 2}px`;
         }
     },
 

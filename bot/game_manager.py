@@ -364,10 +364,11 @@ class GameManager:
                 "game_id": game_id,
             }
         else:
-            # Session complete — include player_infos before cleanup
+            # Session complete — include player_infos and last game result before cleanup
             result = {
                 "action": "session_end",
                 "results": session.results,
+                "game_result": game_result,
                 "game_id": game_id,
                 "group_id": session.group_id,
                 "player_infos": session.player_infos,

@@ -102,6 +102,7 @@ class GameState:
     winner_telegram_id: Optional[int] = None
     is_fish: bool = False
     consecutive_passes: int = 0
+    first_tile_index: int = 0  # index of the first tile played (center of the board)
 
     @property
     def current_player(self) -> PlayerState:
@@ -148,6 +149,7 @@ class GameState:
             "winner_telegram_id": self.winner_telegram_id,
             "is_fish": self.is_fish,
             "boneyard_count": len(self.boneyard),
+            "first_tile_index": self.first_tile_index,
         }
 
 
@@ -340,6 +342,7 @@ class DominoEngine:
             else:
                 board_tile = BoardTile(tile=tile, exposed_left=tile.right, exposed_right=tile.left)
             self.state.board.insert(0, board_tile)
+            self.state.first_tile_index += 1
         else:  # right
             if tile.left == target_value:
                 board_tile = BoardTile(tile=tile, exposed_left=tile.left, exposed_right=tile.right)

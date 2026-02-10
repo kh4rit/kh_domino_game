@@ -200,13 +200,27 @@ async def _handle_game_over(game_id: str):
 
     elif result["action"] == "session_end":
         game_manager.cancel_turn_timer(game_id)
-        await ws_manager.broadcast_event(game_id, "session_end", {
-            "results": result["results"],
+
+        # Show the final game result first (win/loss/fish overlay)
+        await ws_manager.broadcast_event(game_id, "game_over", {
+            "game_result": result["game_result"],
+            "next_game": False,
         })
 
-        # Save results to database
-        from bot.db_ops import save_game_results
+        # Wait for the game-over overlay to display
+        await asyncio.sleep(5)
+
+        # Save results to database before fetching leaderboard
+        from bot.db_ops import save_game_results, get_leaderboard
         await save_game_results(result["group_id"], result["results"])
+
+        # Fetch updated leaderboard to include in session_end event
+        leaderboard = await get_leaderboard(result["group_id"])
+
+        await ws_manager.broadcast_event(game_id, "session_end", {
+            "results": result["results"],
+            "leaderboard": leaderboard,
+        })
 
         # Notify the Telegram group
         if game_manager._on_session_end:
