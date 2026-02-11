@@ -10,6 +10,13 @@
     --tile-bg: #f5f0e8;
     --tile-border: #8b7355;
     --tile-pip: #1a1a1a;
+    --pip-0: #999999;
+    --pip-1: #dc2626;
+    --pip-2: #2563eb;
+    --pip-3: #16a34a;
+    --pip-4: #d97706;
+    --pip-5: #9333ea;
+    --pip-6: #1a1a1a;
     --tile-divider: #c4b396;
     --tile-selected: #ffdd57;
     --tile-playable: #4ade80;
@@ -240,6 +247,15 @@ body {
     justify-self: center;
     box-shadow: inset 0 1px 1px rgba(255,255,255,0.2);
 }
+
+/* Pip color per digit value */
+.pip.val-0 { background: var(--pip-0); }
+.pip.val-1 { background: var(--pip-1); }
+.pip.val-2 { background: var(--pip-2); }
+.pip.val-3 { background: var(--pip-3); }
+.pip.val-4 { background: var(--pip-4); }
+.pip.val-5 { background: var(--pip-5); }
+.pip.val-6 { background: var(--pip-6); }
 
 /* Pip positions in a 3x3 grid */
 .pip.pos-tl { grid-column: 1; grid-row: 1; }

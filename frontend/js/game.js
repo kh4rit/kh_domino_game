@@ -35,7 +35,7 @@ const Game = {
         const positions = this.PIP_LAYOUTS[value] || [];
         for (const pos of positions) {
             const pip = document.createElement('div');
-            pip.className = `pip pos-${pos}`;
+            pip.className = `pip pos-${pos} val-${value}`;
             half.appendChild(pip);
         }
 
